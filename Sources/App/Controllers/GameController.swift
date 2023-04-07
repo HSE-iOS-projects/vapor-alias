@@ -19,7 +19,7 @@ struct GameController: RouteCollection {
             room.get(use: getRoomParticipants)
         }
         authRoutes.group(":teamID") { team in
-            team.put(use: joinRoomRequest)
+            team.put(use: joinTeamRequest)
         }
     }
 
