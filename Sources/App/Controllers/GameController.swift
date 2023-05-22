@@ -36,7 +36,11 @@ struct GameController: RouteCollection {
                         status: "Waiting")
 
         try await room.save(on: req.db).get()
-        let response = CreateRoomResponse(roomID: try room.requireID(), inviteCode: room.inviteCode)
+        let roomId = try room.requireID()
+
+        try GameRoomsManager.shared.createRoom(userId: user, roomId: roomId)
+
+        let response = CreateRoomResponse(roomID: roomId, inviteCode: room.inviteCode)
         return response
     }
 
@@ -107,8 +111,12 @@ struct GameController: RouteCollection {
             return .badRequest
         }
 
-        let participant = Participant(roomID: try room.requireID(), userID: user)
+        let roomId = try room.requireID()
+        let participant = Participant(roomID: roomId, userID: user)
+
         try await participant.save(on: req.db)
+
+        try GameRoomsManager.shared.addUserToRoom(userId: user, roomId: roomId)
         return .ok
     }
 
@@ -143,6 +151,9 @@ struct GameController: RouteCollection {
         }
 
         try await participant.delete(on: req.db)
+
+        try GameRoomsManager.shared.deleteUserFromRoom(userId: deleteReq.participantID, roomId: deleteReq.roomID)
+
         return .ok
     }
 

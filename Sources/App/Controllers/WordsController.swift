@@ -10,7 +10,7 @@ struct WordsController: RouteCollection {
         }
     }
 
-    func getWords(req: Request) async throws -> [String] {
+    func getWords(req: Request) async throws -> Words {
         let _ = try await TokenHelpers.getUserID(req: req)
 
         guard let strNum = req.parameters.get("number"), let num = Int(strNum) else {
@@ -18,7 +18,8 @@ struct WordsController: RouteCollection {
         }
 
         let words = WordsProvider.getRandomWords(num: num)
-        return words
+        let wordsResponse = Words(words: words)
+        return wordsResponse
     }
 
 }
