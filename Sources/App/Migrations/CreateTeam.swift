@@ -6,6 +6,7 @@ struct CreateTeam: AsyncMigration {
             .id()
             .field("id_room", .uuid, .required, .references("rooms", .id))
             .field("name", .string, .required)
+            .field("round", .int64, .required)
             .field("total_points", .int, .required)
             .create()
     }

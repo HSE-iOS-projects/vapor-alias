@@ -22,6 +22,7 @@ struct GameController: RouteCollection {
         gameRoutes.group(":teamID") { team in
             team.put(use: joinTeamRequest)
         }
+        gameRoutes.put("addToTeam", use: addToTeamRequest)
     }
     
     func getMe(req: Request) async throws -> getMeResponse {
@@ -274,22 +275,23 @@ struct GameController: RouteCollection {
     
     func addToTeamRequest(req: Request) async throws -> HTTPStatus {
         let user = try await TokenHelpers.getUserID(req: req)
-
-        guard let teamID = req.parameters.get("teamID"),
-              let id = UUID(teamID)
-        else {
-            throw Abort(.notFound)
-        }
+        let addToTeamReq = try req.content.decode(AddUserToTeamRequest.self)
 
         guard let participant = try await Participant.query(on: req.db)
-            .filter(\.$userID == user)
+            .filter(\.$userID == addToTeamReq.userID)
             .first()
         else {
-            return .badRequest
+            return .notFound
         }
 
-        participant.teamID = id
+        participant.teamID = addToTeamReq.teamID
         try await participant.update(on: req.db)
+        return .ok
+    }
+    
+    func nextRound(req: Request) async throws -> HTTPStatus {
+        
+        
         return .ok
     }
 
