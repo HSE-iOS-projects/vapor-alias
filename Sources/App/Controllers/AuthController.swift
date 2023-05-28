@@ -9,23 +9,27 @@ struct AuthController: RouteCollection {
         authRoutes.post("login", use: login)
     }
 
-    func register(req: Request) async throws -> User {
+    func register(req: Request) async throws -> Token {
         let registerRequest = try req.content.decode(RegisterRequest.self)
         let passwordHash = try Bcrypt.hash(registerRequest.password)
-        let user = User(email: registerRequest.email, password: passwordHash)
+        let user = User(nickname: registerRequest.nickname, password: passwordHash)
         try await user.save(on: req.db).get()
-        return user
+        
+        let expirationTime = Calendar.current.date(byAdding: .year, value: 1, to: Date())!
+        let payload = AuthPayload(subject: try user.requireID().uuidString, expirationTime: expirationTime)
+        let token = try req.jwt.sign(payload)
+        return Token(token: token.description)
     }
 
     func login(req: Request) async throws -> Token {
         let loginRequest = try req.content.decode(LoginRequest.self)
         guard let user = try await User.query(on: req.db)
-            .filter(\.$email == loginRequest.email)
+            .filter(\.$nickname == loginRequest.nickname)
             .first()
         else {
             throw Abort(.notFound)
         }
-
+ 
         let passwordIsValid = try Bcrypt.verify(loginRequest.password, created: user.password)
 
         guard passwordIsValid else {

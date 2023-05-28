@@ -8,17 +8,17 @@ final class User: Model, Content {
     @ID(key: .id)
     var id: UUID?
 
-    @Field(key: "email")
-    var email: String
+    @Field(key: "nickname")
+    var nickname: String
 
     @Field(key: "password")
     var password: String
 
     init() { }
 
-    init(id: UUID? = nil, email: String, password: String) {
+    init(id: UUID? = nil, nickname: String, password: String) {
         self.id = id
-        self.email = email
+        self.nickname = nickname
         self.password = password
     }
     

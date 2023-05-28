@@ -4,25 +4,52 @@ import Vapor
 struct GameController: RouteCollection {
 
     func boot(routes: RoutesBuilder) throws {
-        let authRoutes = routes.grouped("game")
-        authRoutes.post("create", use: create)
-        authRoutes.get("getAllRooms", use: getAllRooms)
-        authRoutes.get("getMyRooms", use: getMyRooms)
-        authRoutes.post("changeRoomState", use: changeRoomState)
-        authRoutes.post("joinRoom", use: joinRoomRequest)
-        authRoutes.delete("deleteUserFromRoomRequest", use: deleteUserFromRoomRequest)
-        authRoutes.delete("leaveRoomRequest", use: leaveRoomRequest)
-        authRoutes.put("passAdminStatus", use: passAdminStatus)
-        authRoutes.post("createTeamRequest", use: createTeamRequest)
-        authRoutes.group(":roomID") { room in
+        let gameRoutes = routes.grouped("game")
+        gameRoutes.get("getMe", use: getMe)
+        gameRoutes.post("create", use: create)
+        gameRoutes.get("getAllRooms", use: getAllRooms)
+        gameRoutes.get("getMyRoom", use: getMyRoom)
+        gameRoutes.post("changeRoomState", use: changeRoomState)
+        gameRoutes.post("joinRoom", use: joinRoomRequest)
+        gameRoutes.delete("deleteUserFromRoomRequest", use: deleteUserFromRoomRequest)
+        gameRoutes.delete("leaveRoomRequest", use: leaveRoomRequest)
+        gameRoutes.put("passAdminStatus", use: passAdminStatus)
+        gameRoutes.post("createTeamRequest", use: createTeamRequest)
+        gameRoutes.group(":roomID") { room in
             room.delete(use: deleteRoomRequest)
             room.get(use: getRoomParticipants)
         }
-        authRoutes.group(":teamID") { team in
+        gameRoutes.group(":teamID") { team in
             team.put(use: joinTeamRequest)
         }
     }
+    
+    func getMe(req: Request) async throws -> getMeResponse {
+        let user = try await TokenHelpers.getUserID(req: req)
+        guard let nickname = try await User.query(on: req.db)
+                                        .filter(\.$id == user)
+                                        .first()?.nickname else {
+            throw Abort(.notFound)
+        }
+        
+        var participant: Participant?
+        var roomName: String?
+        
+        if let part = try? await Participant.query(on: req.db)
+            .filter(\.$userID == user)
+            .first() {
+            participant = part
+            
+            let room = try? await Room.query(on: req.db)
+                .filter(\.$id == part.roomID)
+                .first()?.name
+            
+            roomName = room
+        }
 
+        return getMeResponse(nickname: nickname, roomID: participant?.roomID, roomName: roomName)
+    }
+    
     func create(req: Request) async throws -> CreateRoomResponse {
         let roomReq = try req.content.decode(CreateRoomRequest.self)
         let user = try await TokenHelpers.getUserID(req: req)
@@ -37,30 +64,46 @@ struct GameController: RouteCollection {
 
         try await room.save(on: req.db).get()
         let roomId = try room.requireID()
-
+    
         try GameRoomsManager.shared.createRoom(userId: user, roomId: roomId)
 
-        let response = CreateRoomResponse(roomID: roomId, inviteCode: room.inviteCode)
+        let response = CreateRoomResponse(roomID: roomId, roomName: roomReq.name, inviteCode: room.inviteCode)
         return response
     }
 
     func getAllRooms(req: Request) async throws -> [GetRoomsResponse] {
-        let _ = try await TokenHelpers.getUserID(req: req)
+        let userId = try await TokenHelpers.getUserID(req: req)
+    
+        let activeRoomId = try await Participant.query(on: req.db)
+            .filter(\.$userID == userId)
+            .first()?.id ?? UUID()
+        
 
         let rooms = try await Room.query(on: req.db).all().map {
-            GetRoomsResponse(roomID: try $0.requireID(), name: $0.name, isOpen: $0.isOpen, status: $0.status)
+            GetRoomsResponse(roomID: try $0.requireID(),
+                             isActivRoom: $0.id == activeRoomId,
+                             isAdmin: $0.adminId == userId,
+                             name: $0.name,
+                             isOpen: $0.isOpen,
+                             status: $0.status)
         }
 
         return rooms
     }
 
-    func getMyRooms(req: Request) async throws -> [GetRoomsResponse] {
+    func getMyRoom(req: Request) async throws -> [GetRoomsResponse] {
         let user = try await TokenHelpers.getUserID(req: req)
 
         let rooms = try await Room.query(on: req.db)
             .filter(\.$adminId == user)
             .all()
-            .map { GetRoomsResponse(roomID: try $0.requireID(), name: $0.name, isOpen: $0.isOpen, status: $0.status) }
+            .map { GetRoomsResponse(roomID: try $0.requireID(),
+                                    isActivRoom: true,
+                                    isAdmin: $0.adminId == user,
+                                    name: $0.name,
+                                    isOpen: $0.isOpen,
+                                    status: $0.status)
+            }
 
         return rooms
     }
@@ -209,6 +252,27 @@ struct GameController: RouteCollection {
     }
 
     func joinTeamRequest(req: Request) async throws -> HTTPStatus {
+        let user = try await TokenHelpers.getUserID(req: req)
+
+        guard let teamID = req.parameters.get("teamID"),
+              let id = UUID(teamID)
+        else {
+            throw Abort(.notFound)
+        }
+
+        guard let participant = try await Participant.query(on: req.db)
+            .filter(\.$userID == user)
+            .first()
+        else {
+            return .badRequest
+        }
+
+        participant.teamID = id
+        try await participant.update(on: req.db)
+        return .ok
+    }
+    
+    func addToTeamRequest(req: Request) async throws -> HTTPStatus {
         let user = try await TokenHelpers.getUserID(req: req)
 
         guard let teamID = req.parameters.get("teamID"),
