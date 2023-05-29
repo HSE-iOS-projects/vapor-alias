@@ -6,6 +6,7 @@ struct CreateRoom: AsyncMigration {
             .id()
             .field("admin_id", .uuid, .required, .references("users", .id))
             .field("name", .string, .required)
+            .field("url", .string, .required)
             .field("is_open", .bool, .required)
             .field("invite_code", .string)
             .field("status", .string)

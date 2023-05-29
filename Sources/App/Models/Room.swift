@@ -14,6 +14,9 @@ final class Room: Content, Model {
     @Field(key: "name")
     var name: String
 
+    @Field(key: "url")
+    var url: String
+
     @Field(key: "is_open")
     var isOpen: Bool
 
@@ -25,10 +28,11 @@ final class Room: Content, Model {
 
     init() { }
 
-    init(id: UUID? = nil, adminId: UUID, name: String, isOpen: Bool, inviteCode: String?, status: String) {
+    init(id: UUID? = nil, adminId: UUID, name: String, url: String, isOpen: Bool, inviteCode: String?, status: String) {
         self.id = id
         self.adminId = adminId
         self.name = name
+        self.url = url
         self.isOpen = isOpen
         self.inviteCode = inviteCode
         self.status = status

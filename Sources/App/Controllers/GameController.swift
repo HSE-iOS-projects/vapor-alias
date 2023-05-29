@@ -59,6 +59,7 @@ struct GameController: RouteCollection {
 
         let room = Room(adminId: user,
                         name: roomReq.name,
+                        url: roomReq.url,
                         isOpen: roomReq.is_open,
                         inviteCode: inviteCode,
                         status: "Waiting")
@@ -83,6 +84,7 @@ struct GameController: RouteCollection {
         let rooms = try await Room.query(on: req.db).all().map {
             GetRoomsResponse(roomID: try $0.requireID(),
                              isActivRoom: $0.id == activeRoomId,
+                             url: $0.url,
                              isAdmin: $0.adminId == userId,
                              name: $0.name,
                              isOpen: $0.isOpen,
@@ -100,6 +102,7 @@ struct GameController: RouteCollection {
             .all()
             .map { GetRoomsResponse(roomID: try $0.requireID(),
                                     isActivRoom: true,
+                                    url: $0.url,
                                     isAdmin: $0.adminId == user,
                                     name: $0.name,
                                     isOpen: $0.isOpen,
