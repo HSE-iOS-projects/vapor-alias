@@ -1,6 +1,6 @@
 import Vapor
 
-struct getMeResponse: Content {
+struct GetMeResponse: Content {
     let nickname: String
     let roomID: UUID?
     let roomName: String?
