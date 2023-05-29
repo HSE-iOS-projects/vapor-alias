@@ -129,7 +129,41 @@ struct GameController: RouteCollection {
             .filter(\.$roomID == roomId)
             .all()
         
-        return GetRoomInfoResponse(name: room.name, id: roomId, participants: participants, isAdmin: room.adminId == user, key: room.inviteCode)
+        var users = [User]()
+        
+        for participant in participants {
+            if let roomUser = try await User.query(on: req.db)
+                .filter(\.$id == participant.requireID())
+                .first() {
+                users.append(roomUser)
+            }
+        }
+        
+        var teams = [Team]()
+        
+        for participant in participants {
+            if let teamId = participant.teamID,
+               let team = try await Team.query(on: req.db)
+                .filter(\.$id == teamId)
+                .first() {
+                teams.append(team)
+            }
+        }
+        
+        var usersInGame = [UserInGame]()
+        
+        for participant in participants {
+            let id = try participant.requireID()
+            let name = users.first(where: { $0.id == id })?.nickname ?? ""
+            let teamId = participant.teamID
+            var team: String?
+            if let teamId = teamId {
+                team = try teams.first(where: { try $0.requireID() == teamId})?.name
+            }
+            usersInGame.append(.init(id: id, name: name, teamId: teamId, team: team))
+        }
+    
+        return GetRoomInfoResponse(name: room.name, id: roomId, participants: usersInGame, isAdmin: room.adminId == user, key: room.inviteCode)
     }
     
     func changeRoomState(req: Request) async throws -> HTTPStatus {
@@ -163,7 +197,7 @@ struct GameController: RouteCollection {
         return .ok
     }
     
-    func joinRoomRequest(req: Request) async throws -> HTTPStatus {
+    func joinRoomRequest(req: Request) async throws -> GetRoomInfoResponse {
         let joinReq = try req.content.decode(JoinRoomRequest.self)
         let user = try await TokenHelpers.getUserID(req: req)
         
@@ -171,11 +205,11 @@ struct GameController: RouteCollection {
             .filter(\.$id == joinReq.roomID)
             .first()
         else {
-            return .notFound
+            throw Abort(.notFound)
         }
         
         if !room.isOpen && room.inviteCode != joinReq.inviteCode {
-            return .badRequest
+            throw Abort(.badRequest)
         }
         
         let roomId = try room.requireID()
@@ -184,7 +218,52 @@ struct GameController: RouteCollection {
         try await participant.save(on: req.db)
         
         try GameRoomsManager.shared.addUserToRoom(userId: user, roomId: roomId)
-        return .ok
+    
+        guard let room = try await Room.query(on: req.db)
+            .filter(\.$id == roomId)
+            .first() else {
+            throw Abort(.notFound)
+        }
+        
+        let participants = try await Participant.query(on: req.db)
+            .filter(\.$roomID == roomId)
+            .all()
+        
+        var users = [User]()
+        
+        for participant in participants {
+            if let roomUser = try await User.query(on: req.db)
+                .filter(\.$id == participant.requireID())
+                .first() {
+                users.append(roomUser)
+            }
+        }
+        
+        var teams = [Team]()
+        
+        for participant in participants {
+            if let teamId = participant.teamID,
+               let team = try await Team.query(on: req.db)
+                .filter(\.$id == teamId)
+                .first() {
+                teams.append(team)
+            }
+        }
+        
+        var usersInGame = [UserInGame]()
+        
+        for participant in participants {
+            let id = try participant.requireID()
+            let name = users.first(where: { $0.id == id })?.nickname ?? ""
+            let teamId = participant.teamID
+            var team: String?
+            if let teamId = teamId {
+                team = try teams.first(where: { try $0.requireID() == teamId})?.name
+            }
+            usersInGame.append(.init(id: id, name: name, teamId: teamId, team: team))
+        }
+    
+        return GetRoomInfoResponse(name: room.name, id: roomId, participants: usersInGame, isAdmin: room.adminId == user, key: room.inviteCode)
     }
     
     func getRoomParticipants(req: Request) async throws -> [Participant] {
@@ -313,6 +392,14 @@ struct GameController: RouteCollection {
     }
     
     func nextRound(req: Request) async throws -> HTTPStatus {
+        let user = try await TokenHelpers.getUserID(req: req)
+        
+        guard let roomID = try await Participant.query(on: req.db)
+            .filter(\.$id == user)
+            .first()?.roomID else {
+            throw Abort(.notFound)
+        }
+        
         
         
         return .ok
