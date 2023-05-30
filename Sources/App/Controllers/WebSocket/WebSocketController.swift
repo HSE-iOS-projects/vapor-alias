@@ -16,7 +16,7 @@ struct WebSocketController: RouteCollection {
                     return
                 }
 
-                ConnectionsManager.shared.addConnection(userId: userId, connection: ws)
+                WebsocketManager.shared.addConnection(connection: ws, userId: userId)
             }
 
             return closure

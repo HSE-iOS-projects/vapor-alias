@@ -10,6 +10,7 @@ struct CreateRoom: AsyncMigration {
             .field("is_open", .bool, .required)
             .field("invite_code", .string)
             .field("status", .string)
+            .field("numberOfRounds", .int64)
             .unique(on: "name")
             .create()
     }

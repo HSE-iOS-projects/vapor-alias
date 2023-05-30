@@ -25,7 +25,8 @@ struct GameController: RouteCollection {
         gameRoutes.put("addToTeam", use: addToTeamRequest)
         gameRoutes.post("getRoomInfo", use: getRoomInfo)
         gameRoutes.delete("deleteTeam", use: deleteTeam)
-
+        gameRoutes.post("startGame", use: startGame)
+        gameRoutes.post("nextRound", use: nextRound)
     }
     
     func getMe(req: Request) async throws -> GetMeResponse {
@@ -332,9 +333,7 @@ struct GameController: RouteCollection {
         }
         
         try await participant.delete(on: req.db)
-        
-        try GameRoomsManager.shared.deleteUserFromRoom(userId: deleteReq.participantID, roomId: deleteReq.roomID)
-        
+    
         return .ok
     }
     
@@ -449,6 +448,31 @@ struct GameController: RouteCollection {
         return .ok
     }
     
+    func startGame(req: Request) async throws -> HTTPStatus {
+        let user = try await TokenHelpers.getUserID(req: req)
+        let startGameRequest = try req.content.decode(StartGameRequest.self)
+        
+        guard let room = try await Room.query(on: req.db)
+            .filter(\.$adminId == user)
+            .first() else {
+            throw Abort(.notFound)
+        }
+        
+        room.numberOfRounds = startGameRequest.numberOfRounds
+        try await room.update(on: req.db)
+        
+        let participants = try await Participant.query(on: req.db)
+            .filter(\.$roomID == room.requireID())
+            .all()
+        
+        let participantsId = participants.filter { $0.teamID != nil }.compactMap { $0.id }
+        
+        
+        WebsocketManager.shared.send(message: "start", receivers: participantsId)
+        
+        return .ok
+    }
+    
     func nextRound(req: Request) async throws -> HTTPStatus {
         let user = try await TokenHelpers.getUserID(req: req)
         
@@ -456,6 +480,39 @@ struct GameController: RouteCollection {
             .filter(\.$id == user)
             .first()?.roomID else {
             throw Abort(.notFound)
+        }
+        
+        guard let room = try await Room.query(on: req.db)
+            .filter(\.$id == roomID)
+            .first() else {
+            return .notFound
+        }
+        
+        let participantOfGame = try await Participant.query(on: req.db)
+            .filter(\.$roomID == roomID)
+            .all()
+        
+        var teamSizes = [UUID: Int]()
+        
+        try participantOfGame.forEach {
+            guard let teamId = $0.teamID else {
+                throw Abort(.badRequest)
+            }
+            
+            if teamSizes.keys.contains(teamId) {
+                teamSizes[teamId]! += 1
+            }
+            else {
+                teamSizes[teamId] = 1
+            }
+        }
+        
+        let maxTeamSize = teamSizes.max(by: { (el1, el2) in
+            el1.value < el2.value
+        })?.value
+        
+        guard let maxTeamSize = maxTeamSize else {
+            return .badRequest
         }
         
         guard let participant = try await Participant.query(on: req.db)
@@ -482,12 +539,28 @@ struct GameController: RouteCollection {
             teamMembersIds.append(id)
         }
         
-        guard let teamRound = try await Team.query(on: req.db)
+        guard let team = try await Team.query(on: req.db)
             .filter(\.$id == teamId)
-            .first()?.round else {
+            .first() else {
             throw Abort(.badRequest)
         }
+        
+        let teamRound = team.round
     
+        if teamRound % maxTeamSize == 0 {
+            if teamRound / maxTeamSize == room.numberOfRounds {
+                WebsocketManager.shared.send(message: "waitForResults", receivers: teamMembersIds)
+                return .ok
+            }
+        }
+        
+        team.round += 1
+        try await team.update(on: req.db)
+        
+        let activeUser = teamMembersIds[teamRound % maxTeamSize]
+        teamMembersIds.remove(at: teamRound % maxTeamSize)
+    
+        try WebsocketManager.shared.sendWords(activeUser: activeUser, waiting: teamMembersIds)
         return .ok
     }
     

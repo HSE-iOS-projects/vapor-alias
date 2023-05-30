@@ -25,10 +25,13 @@ final class Room: Content, Model {
 
     @Field(key: "status")
     var status: String
+    
+    @Field(key: "numberOfRounds")
+    var numberOfRounds: Int
 
     init() { }
 
-    init(id: UUID? = nil, adminId: UUID, name: String, url: String, isOpen: Bool, inviteCode: String?, status: String) {
+    init(id: UUID? = nil, adminId: UUID, name: String, url: String, isOpen: Bool, inviteCode: String?, status: String, numberOfRounds: Int = 1) {
         self.id = id
         self.adminId = adminId
         self.name = name
@@ -36,6 +39,7 @@ final class Room: Content, Model {
         self.isOpen = isOpen
         self.inviteCode = inviteCode
         self.status = status
+        self.numberOfRounds = numberOfRounds
     }
 
 }
