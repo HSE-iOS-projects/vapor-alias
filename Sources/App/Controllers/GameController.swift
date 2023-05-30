@@ -70,7 +70,7 @@ struct GameController: RouteCollection {
         try await room.save(on: req.db).get()
         let roomId = try room.requireID()
         
-        try GameRoomsManager.shared.createRoom(userId: user, roomId: roomId)
+//        try GameRoomsManager.shared.createRoom(userId: user, roomId: roomId)
         
         let response = CreateRoomResponse(roomID: roomId, roomName: roomReq.name, inviteCode: room.inviteCode)
         return response
@@ -137,7 +137,7 @@ struct GameController: RouteCollection {
         
         for participant in participants {
             if let roomUser = try await User.query(on: req.db)
-                .filter(\.$id == participant.requireID())
+                .filter(\.$id == participant.userID)
                 .first() {
                 users.append(roomUser)
             }
@@ -158,7 +158,7 @@ struct GameController: RouteCollection {
         
         for participant in participants {
             let id = try participant.requireID()
-            let name = users.first(where: { $0.id == id })?.nickname ?? ""
+            let name = users.first(where: { $0.id == participant.userID })?.nickname ?? ""
             let teamId = participant.teamID
             var team: String?
             if let teamId = teamId {
@@ -215,10 +215,21 @@ struct GameController: RouteCollection {
         let joinReq = try req.content.decode(JoinRoomRequest.self)
         let user = try await TokenHelpers.getUserID(req: req)
         
-        guard let room = try await Room.query(on: req.db)
-            .filter(\.$id == joinReq.roomID)
-            .first()
-        else {
+        var room: Room?
+        if let id = joinReq.roomID {
+            room = try await Room.query(on: req.db)
+                .filter(\.$id == id)
+                .filter(\.$isOpen == true)
+                .first()
+        
+        } else if let code = joinReq.inviteCode {
+            room = try await Room.query(on: req.db)
+                .filter(\.$inviteCode == code)
+                .filter(\.$isOpen == false)
+                .first()
+        }
+        
+        guard let room = room else {
             throw Abort(.notFound)
         }
         
@@ -247,7 +258,7 @@ struct GameController: RouteCollection {
         
         for participant in participants {
             if let roomUser = try await User.query(on: req.db)
-                .filter(\.$id == participant.requireID())
+                .filter(\.$id == participant.userID)
                 .first() {
                 users.append(roomUser)
             }
@@ -268,7 +279,7 @@ struct GameController: RouteCollection {
         
         for participant in participants {
             let id = try participant.requireID()
-            let name = users.first(where: { $0.id == id })?.nickname ?? ""
+            let name = users.first(where: { $0.id == participant.userID })?.nickname ?? ""
             let teamId = participant.teamID
             var team: String?
             if let teamId = teamId {
