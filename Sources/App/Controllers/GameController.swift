@@ -163,9 +163,14 @@ struct GameController: RouteCollection {
             usersInGame.append(.init(id: id, name: name, teamId: teamId, team: team))
         }
     
+        let roomTeams = try await Team.query(on: req.db)
+                   .filter(\.$roomID == roomId)
+                   .all()
+        
         return GetRoomInfoResponse(name: room.name,
                                    id: roomId,
                                    participants: usersInGame,
+                                   teams: roomTeams,
                                    url: room.url,
                                    isAdmin: room.adminId == user,
                                    key: room.inviteCode)
@@ -268,9 +273,14 @@ struct GameController: RouteCollection {
             usersInGame.append(.init(id: id, name: name, teamId: teamId, team: team))
         }
     
+        let roomTeams = try await Team.query(on: req.db)
+                   .filter(\.$roomID == roomId)
+                   .all()
+        
         return GetRoomInfoResponse(name: room.name,
                                    id: roomId,
                                    participants: usersInGame,
+                                   teams: roomTeams,
                                    url: room.url,
                                    isAdmin: room.adminId == user,
                                    key: room.inviteCode)
