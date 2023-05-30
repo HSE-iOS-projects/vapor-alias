@@ -24,6 +24,8 @@ struct GameController: RouteCollection {
         }
         gameRoutes.put("addToTeam", use: addToTeamRequest)
         gameRoutes.post("getRoomInfo", use: getRoomInfo)
+        gameRoutes.delete("deleteTeam", use: deleteTeam)
+
     }
     
     func getMe(req: Request) async throws -> GetMeResponse {
@@ -82,7 +84,9 @@ struct GameController: RouteCollection {
             .first()?.id ?? UUID()
         
         
-        let rooms = try await Room.query(on: req.db).all().map {
+        let rooms = try await Room.query(on: req.db)
+            .filter(\.$isOpen == true)
+            .all().map {
             GetRoomsResponse(roomID: try $0.requireID(),
                              isActivRoom: $0.id == activeRoomId,
                              url: $0.url,
@@ -227,7 +231,7 @@ struct GameController: RouteCollection {
         
         try await participant.save(on: req.db)
         
-        try GameRoomsManager.shared.addUserToRoom(userId: user, roomId: roomId)
+//        try GameRoomsManager.shared.addUserToRoom(userId: user, roomId: roomId)
     
         guard let room = try await Room.query(on: req.db)
             .filter(\.$id == roomId)
@@ -336,6 +340,29 @@ struct GameController: RouteCollection {
         try await participant.delete(on: req.db)
         return .ok
     }
+    
+    func deleteTeam(req: Request) async throws -> HTTPStatus {
+        let user = try await TokenHelpers.getUserID(req: req)
+        let deleteReq = try req.content.decode(DeleteRoomRequest.self)
+        
+        guard let team = try await Team.find(deleteReq.id, on: req.db)
+        else {
+            return .badRequest
+        }
+        
+        let participant = try await Participant.query(on: req.db)
+            .filter(\.$teamID == deleteReq.id)
+            .all()
+        
+        for item in participant {
+            item.teamID = nil
+            try await item.update(on: req.db)
+        }
+        
+        try await team.delete(on: req.db)
+        return .ok
+    }
+
     
     func passAdminStatus(req: Request) async throws -> HTTPStatus {
         let user = try await TokenHelpers.getUserID(req: req)
