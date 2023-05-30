@@ -23,7 +23,7 @@ struct GameController: RouteCollection {
             team.put(use: joinTeamRequest)
         }
         gameRoutes.put("addToTeam", use: addToTeamRequest)
-        gameRoutes.get("getRoomInfo", use: getRoomInfo)
+        gameRoutes.post("getRoomInfo", use: getRoomInfo)
     }
     
     func getMe(req: Request) async throws -> GetMeResponse {
@@ -163,7 +163,12 @@ struct GameController: RouteCollection {
             usersInGame.append(.init(id: id, name: name, teamId: teamId, team: team))
         }
     
-        return GetRoomInfoResponse(name: room.name, id: roomId, participants: usersInGame, isAdmin: room.adminId == user, key: room.inviteCode)
+        return GetRoomInfoResponse(name: room.name,
+                                   id: roomId,
+                                   participants: usersInGame,
+                                   url: room.url,
+                                   isAdmin: room.adminId == user,
+                                   key: room.inviteCode)
     }
     
     func changeRoomState(req: Request) async throws -> HTTPStatus {
@@ -263,7 +268,12 @@ struct GameController: RouteCollection {
             usersInGame.append(.init(id: id, name: name, teamId: teamId, team: team))
         }
     
-        return GetRoomInfoResponse(name: room.name, id: roomId, participants: usersInGame, isAdmin: room.adminId == user, key: room.inviteCode)
+        return GetRoomInfoResponse(name: room.name,
+                                   id: roomId,
+                                   participants: usersInGame,
+                                   url: room.url,
+                                   isAdmin: room.adminId == user,
+                                   key: room.inviteCode)
     }
     
     func getRoomParticipants(req: Request) async throws -> [Participant] {
@@ -400,8 +410,36 @@ struct GameController: RouteCollection {
             throw Abort(.notFound)
         }
         
+        guard let participant = try await Participant.query(on: req.db)
+            .filter(\.$id == user)
+            .first() else {
+            throw Abort(.notFound)
+        }
         
+        guard let teamId = participant.teamID else {
+            throw Abort(.badRequest)
+        }
         
+        let teamMembers = try await Participant.query(on: req.db)
+            .filter(\.$teamID == teamId)
+            .all()
+        
+        var teamMembersIds = [UUID]()
+        
+        for user in teamMembers {
+            guard let id = user.id else {
+                throw Abort(.badRequest)
+            }
+            
+            teamMembersIds.append(id)
+        }
+        
+        guard let teamRound = try await Team.query(on: req.db)
+            .filter(\.$id == teamId)
+            .first()?.round else {
+            throw Abort(.badRequest)
+        }
+    
         return .ok
     }
     

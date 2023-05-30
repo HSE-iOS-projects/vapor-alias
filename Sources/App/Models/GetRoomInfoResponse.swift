@@ -4,6 +4,7 @@ struct GetRoomInfoResponse: Content {
     let name: String
     let id: UUID
     let participants: [UserInGame]
+    let url: String
     let isAdmin: Bool
     let key: String?
 }
