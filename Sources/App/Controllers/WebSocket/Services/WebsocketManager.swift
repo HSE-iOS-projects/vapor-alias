@@ -17,13 +17,13 @@ final class WebsocketManager {
             throw Abort(.internalServerError)
         }
         
-        send(message: baseArray, receivers: [activeUser])
+        send(message: "words \(baseArray)", receivers: [activeUser])
         send(message: "wait", receivers: waiting)
     }
         
     func send(message: String, receivers: [UUID]) {
-        for (_, ws) in connections {
-            ws.send(message)
+        for id in receivers {
+            connections[id]?.send(message)
         }
     }
     

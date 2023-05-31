@@ -5,7 +5,7 @@ import JWT
 struct WebSocketController: RouteCollection {
 
     func boot(routes: RoutesBuilder) throws {
-        let wordsRoutes = routes.grouped("words")
+        let wordsRoutes = routes.grouped("socket")
         wordsRoutes.webSocket("game", onUpgrade: webSocketBehavior())
 
         func webSocketBehavior() -> (Request, WebSocket) -> () {

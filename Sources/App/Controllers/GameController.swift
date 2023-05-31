@@ -71,8 +71,6 @@ struct GameController: RouteCollection {
         try await room.save(on: req.db).get()
         let roomId = try room.requireID()
         
-//        try GameRoomsManager.shared.createRoom(userId: user, roomId: roomId)
-        
         let response = CreateRoomResponse(roomID: roomId, roomName: roomReq.name, inviteCode: room.inviteCode)
         return response
     }
@@ -465,7 +463,7 @@ struct GameController: RouteCollection {
             .filter(\.$roomID == room.requireID())
             .all()
         
-        let participantsId = participants.filter { $0.teamID != nil }.compactMap { $0.id }
+        let participantsId = participants.filter { $0.teamID != nil }.compactMap { $0.userID }
         
         
         WebsocketManager.shared.send(message: "start", receivers: participantsId)
@@ -475,9 +473,11 @@ struct GameController: RouteCollection {
     
     func nextRound(req: Request) async throws -> HTTPStatus {
         let user = try await TokenHelpers.getUserID(req: req)
+        let nextRoundRequest = try req.content.decode(NextRoundRequest.self)
+        
         
         guard let roomID = try await Participant.query(on: req.db)
-            .filter(\.$id == user)
+            .filter(\.$userID == user)
             .first()?.roomID else {
             throw Abort(.notFound)
         }
@@ -487,18 +487,18 @@ struct GameController: RouteCollection {
             .first() else {
             return .notFound
         }
-        
+
         let participantOfGame = try await Participant.query(on: req.db)
             .filter(\.$roomID == roomID)
             .all()
-        
+
         var teamSizes = [UUID: Int]()
-        
+
         try participantOfGame.forEach {
             guard let teamId = $0.teamID else {
                 throw Abort(.badRequest)
             }
-            
+
             if teamSizes.keys.contains(teamId) {
                 teamSizes[teamId]! += 1
             }
@@ -506,60 +506,100 @@ struct GameController: RouteCollection {
                 teamSizes[teamId] = 1
             }
         }
-        
+
         let maxTeamSize = teamSizes.max(by: { (el1, el2) in
             el1.value < el2.value
         })?.value
-        
+
         guard let maxTeamSize = maxTeamSize else {
             return .badRequest
         }
-        
+
         guard let participant = try await Participant.query(on: req.db)
-            .filter(\.$id == user)
+            .filter(\.$userID == user)
             .first() else {
             throw Abort(.notFound)
         }
-        
+
         guard let teamId = participant.teamID else {
             throw Abort(.badRequest)
         }
-        
+
         let teamMembers = try await Participant.query(on: req.db)
             .filter(\.$teamID == teamId)
             .all()
-        
+
         var teamMembersIds = [UUID]()
-        
+
         for user in teamMembers {
-            guard let id = user.id else {
-                throw Abort(.badRequest)
-            }
-            
-            teamMembersIds.append(id)
+            teamMembersIds.append(user.userID)
         }
-        
+
         guard let team = try await Team.query(on: req.db)
             .filter(\.$id == teamId)
             .first() else {
             throw Abort(.badRequest)
         }
         
-        let teamRound = team.round
-    
-        if teamRound % maxTeamSize == 0 {
-            if teamRound / maxTeamSize == room.numberOfRounds {
-                WebsocketManager.shared.send(message: "waitForResults", receivers: teamMembersIds)
+        if nextRoundRequest.points != -1 {
+            team.totalPoints += nextRoundRequest.points
+            team.round += 1
+        }
+
+        if team.round % maxTeamSize == 0 {
+            if team.round / maxTeamSize == room.numberOfRounds {
+                let teams = try await Team.query(on: req.db)
+                    .filter(\.$roomID == roomID)
+                    .all()
+                
+                let teamsRounds = teams.map { $0.round / maxTeamSize == room.numberOfRounds }
+                
+                for bool in teamsRounds {
+                    if !bool {
+                        WebsocketManager.shared.send(message: "waitForResults", receivers: teamMembersIds)
+                        return .ok
+                    }
+                }
+                
+                var sortedTeams = teams.sorted(by: { team1, team2 in
+                    team1.totalPoints < team2.totalPoints
+                })
+                
+                guard !sortedTeams.isEmpty else {
+                    return .badRequest
+                }
+                
+                let winners = try await Participant.query(on: req.db)
+                    .filter(\.$teamID == sortedTeams[0].requireID())
+                    .all()
+                
+                let winnersIds = try winners.map { try $0.requireID() }
+                
+                sortedTeams.remove(at: 0)
+                let otherTeamsIds = try sortedTeams.map { try $0.requireID() }
+                
+                var others = [UUID]()
+                try participantOfGame.forEach { part in
+                    if let partTeamID = part.teamID {
+                        if otherTeamsIds.contains(partTeamID) {
+                            try others.append(part.requireID())
+                        }
+                    }
+                }
+                
+                WebsocketManager.shared.send(message: "You win", receivers: winnersIds)
+                WebsocketManager.shared.send(message: "You lose", receivers: others)
+                
                 return .ok
             }
         }
-        
-        team.round += 1
+
         try await team.update(on: req.db)
+
+        let activeUser = teamMembersIds[team.round % maxTeamSize]
         
-        let activeUser = teamMembersIds[teamRound % maxTeamSize]
-        teamMembersIds.remove(at: teamRound % maxTeamSize)
-    
+        teamMembersIds.remove(at: team.round % maxTeamSize)
+
         try WebsocketManager.shared.sendWords(activeUser: activeUser, waiting: teamMembersIds)
         return .ok
     }
