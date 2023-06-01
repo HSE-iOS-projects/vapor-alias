@@ -27,6 +27,8 @@ struct GameController: RouteCollection {
         gameRoutes.delete("deleteTeam", use: deleteTeam)
         gameRoutes.post("startGame", use: startGame)
         gameRoutes.post("nextRound", use: nextRound)
+        gameRoutes.put("endGame", use: endGame)
+        gameRoutes.delete("deleteProfile", use: deleteProfile)
     }
     
     func getMe(req: Request) async throws -> GetMeResponse {
@@ -335,6 +337,56 @@ struct GameController: RouteCollection {
         return .ok
     }
     
+    func deleteProfile(req: Request) async throws -> HTTPStatus {
+        let userUIID = try await TokenHelpers.getUserID(req: req)
+   
+        guard let user = try await User.find(userUIID, on: req.db) else {
+            return .badRequest
+        }
+        
+        
+        let room = try await Room.query(on: req.db)
+            .filter(\.$adminId == user.requireID())
+            .all()
+    
+        
+        for r in room {
+            let participant = try await Participant.query(on: req.db)
+                .filter(\.$roomID == r.requireID())
+                .all()
+            
+            for p in participant {
+                try await p.delete(on: req.db)
+            }
+            
+            let teams = try await Team.query(on: req.db)
+                .filter(\.$roomID == r.requireID())
+                .all()
+        
+            for t in teams {
+                try await t.delete(on: req.db)
+            }
+            
+
+        }
+    
+        for r in room {
+            try await r.delete(on: req.db)
+        }
+        
+        let participantMe = try await Participant.query(on: req.db)
+            .filter(\.$userID == user.requireID())
+            .all()
+        
+        for me in participantMe {
+            try await me.delete(on: req.db)
+        }
+        
+        try await user.delete(on: req.db)
+    
+        return .ok
+    }
+    
     func leaveRoomRequest(req: Request) async throws -> HTTPStatus {
         let user = try await TokenHelpers.getUserID(req: req)
         
@@ -383,7 +435,7 @@ struct GameController: RouteCollection {
         }
         
         guard let participant = try await Participant.query(on: req.db)
-            .filter(\.$userID == passReq.userID)
+            .filter(\.$id == passReq.userID)
             .filter(\.$roomID == room.requireID())
             .first()
         else {
@@ -434,12 +486,11 @@ struct GameController: RouteCollection {
         let user = try await TokenHelpers.getUserID(req: req)
         let addToTeamReq = try req.content.decode(AddUserToTeamRequest.self)
         
-        guard let participant = try await Participant.query(on: req.db)
-            .filter(\.$userID == addToTeamReq.userID)
-            .first()
+        guard let participant = try await Participant.find(addToTeamReq.userID, on: req.db)
         else {
             return .notFound
         }
+
         
         participant.teamID = addToTeamReq.teamID
         try await participant.update(on: req.db)
@@ -450,11 +501,19 @@ struct GameController: RouteCollection {
         let user = try await TokenHelpers.getUserID(req: req)
         let startGameRequest = try req.content.decode(StartGameRequest.self)
         
-        guard let room = try await Room.query(on: req.db)
-            .filter(\.$adminId == user)
-            .first() else {
-            throw Abort(.notFound)
+        guard let room = try await Room.find(startGameRequest.roomID, on: req.db)
+        else {
+            return .notFound
         }
+        
+        if room.adminId != user {
+            return .notFound
+        }
+//        guard let room = try await Room.query(on: req.db)
+//            .filter(\.$adminId == user)
+//            .first() else {
+//            throw Abort(.notFound)
+//        }
         
         room.numberOfRounds = startGameRequest.numberOfRounds
         try await room.update(on: req.db)
@@ -471,16 +530,39 @@ struct GameController: RouteCollection {
         return .ok
     }
     
+    func endGame(req: Request) async throws -> HTTPStatus {
+        let user = try await TokenHelpers.getUserID(req: req)
+        let deleteReq = try req.content.decode(EndGame.self)
+        
+        guard let room = try await Room.find(deleteReq.roomID, on: req.db),
+              room.adminId == user
+        else {
+            return .badRequest
+        }
+        
+        let teams = try await Team.query(on: req.db)
+            .filter(\.$roomID == room.requireID())
+            .all()
+        
+        for t in teams {
+            t.totalPoints = 0
+            t.round = 0
+            try await t.update(on: req.db)
+        }
+
+        return .ok
+    }
+    
     func nextRound(req: Request) async throws -> HTTPStatus {
         let user = try await TokenHelpers.getUserID(req: req)
         let nextRoundRequest = try req.content.decode(NextRoundRequest.self)
         
-        
-        guard let roomID = try await Participant.query(on: req.db)
-            .filter(\.$userID == user)
-            .first()?.roomID else {
-            throw Abort(.notFound)
-        }
+        let roomID = nextRoundRequest.roomID
+//        guard let roomID = try await Participant.query(on: req.db)
+//            .filter(\.$userID == user)
+//            .first()?.roomID else {
+//            throw Abort(.notFound)
+//        }
         
         guard let room = try await Room.query(on: req.db)
             .filter(\.$id == roomID)
@@ -546,61 +628,133 @@ struct GameController: RouteCollection {
             team.round += 1
         }
 
+       
+        
+        let allteams = try await Team.query(on: req.db)
+            .filter(\.$roomID == roomID)
+            .all()
+        
+        let index = try allteams.firstIndex { te in
+            try te.requireID() == teamId
+        }
+        if let index {
+            allteams[index].round += 1
+            allteams[index].totalPoints += nextRoundRequest.points
+        }
+        var showResults = true
+        for t in allteams {
+            if maxTeamSize == 1 {
+                if t.round != 1 {
+                    showResults = false
+                }
+            } else {
+                if t.round % maxTeamSize != 0 {
+                    showResults = false
+                }
+            }
+        }
+        
+
+        
         if team.round % maxTeamSize == 0 {
             if team.round / maxTeamSize == room.numberOfRounds {
                 let teams = try await Team.query(on: req.db)
                     .filter(\.$roomID == roomID)
                     .all()
                 
-                let teamsRounds = teams.map { $0.round / maxTeamSize == room.numberOfRounds }
+                var teamsRounds: [Bool]
+                if maxTeamSize == 1 {
+                    teamsRounds = teams.map { $0.round  == room.numberOfRounds }
+                } else {
+                    teamsRounds = teams.map { $0.round / maxTeamSize == room.numberOfRounds }
+                }
                 
                 for bool in teamsRounds {
                     if !bool {
                         WebsocketManager.shared.send(message: "waitForResults", receivers: teamMembersIds)
-                        return .ok
+//                        showResults = false
+//                        return .ok
                     }
                 }
                 
-                var sortedTeams = teams.sorted(by: { team1, team2 in
-                    team1.totalPoints < team2.totalPoints
-                })
-                
-                guard !sortedTeams.isEmpty else {
-                    return .badRequest
-                }
-                
-                let winners = try await Participant.query(on: req.db)
-                    .filter(\.$teamID == sortedTeams[0].requireID())
-                    .all()
-                
-                let winnersIds = try winners.map { try $0.requireID() }
-                
-                sortedTeams.remove(at: 0)
-                let otherTeamsIds = try sortedTeams.map { try $0.requireID() }
-                
-                var others = [UUID]()
-                try participantOfGame.forEach { part in
-                    if let partTeamID = part.teamID {
-                        if otherTeamsIds.contains(partTeamID) {
-                            try others.append(part.requireID())
+                if showResults {
+                    var sortedTeams = allteams.sorted(by: { team1, team2 in
+                        team1.totalPoints > team2.totalPoints
+                    })
+                    
+                    guard !sortedTeams.isEmpty else {
+                        return .badRequest
+                    }
+                    
+                    let winners = try await Participant.query(on: req.db)
+                        .filter(\.$teamID == sortedTeams[0].requireID())
+                        .all()
+                    
+                    let winnersIds = try winners.map { try $0.userID }
+                    
+                    sortedTeams.remove(at: 0)
+                    let otherTeamsIds = try sortedTeams.map { try $0.requireID() }
+                    
+                    var others = [UUID]()
+                    try participantOfGame.forEach { part in
+                        if let partTeamID = part.teamID {
+                            if otherTeamsIds.contains(partTeamID) {
+                                others.append(part.userID)
+                            }
                         }
                     }
+                    
+                    WebsocketManager.shared.send(message: "You win", receivers: winnersIds)
+                    WebsocketManager.shared.send(message: "You lose", receivers: others)
+                    
+                    return .ok
                 }
-                
-                WebsocketManager.shared.send(message: "You win", receivers: winnersIds)
-                WebsocketManager.shared.send(message: "You lose", receivers: others)
-                
-                return .ok
             }
         }
 
         try await team.update(on: req.db)
-
-        let activeUser = teamMembersIds[team.round % maxTeamSize]
         
-        teamMembersIds.remove(at: team.round % maxTeamSize)
+        guard let nextTeam = try await Team.query(on: req.db)
+            .filter(\.$roomID == roomID)
+            .sort(\.$round)
+            .first() else {
+            throw Abort(.badRequest)
+        }
+        
+        let nextTeamMembers = try await Participant.query(on: req.db)
+            .filter(\.$teamID == nextTeam.requireID())
+            .all()
 
-        try WebsocketManager.shared.sendWords(activeUser: activeUser, waiting: teamMembersIds)
+        var nextTeamMembersIds = [UUID]()
+
+        for user in nextTeamMembers {
+            nextTeamMembersIds.append(user.userID)
+        }
+        
+        let activeUser = nextTeamMembersIds[nextTeam.round % maxTeamSize]
+        
+       
+        let allMembers = try await Participant.query(on: req.db)
+            .filter(\.$roomID == roomID)
+            .filter(\.$teamID != nil)
+            .filter(\.$userID != activeUser)
+            .all()
+        
+        var allMembersIds = [UUID]()
+
+        for user in allMembers {
+            allMembersIds.append(user.userID)
+        }
+        
+        if team.round % maxTeamSize == 0  {
+            for l in teamMembersIds {
+                allMembersIds.removeAll { id in
+                    id == l
+                }
+            }
+        }
+        
+        try WebsocketManager.shared.sendWords(activeUser: activeUser, waiting: allMembersIds)
         return .ok
     }
     
