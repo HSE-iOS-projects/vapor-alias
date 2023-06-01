@@ -181,7 +181,7 @@ struct GameController: RouteCollection {
                                    key: room.inviteCode)
     }
     
-    func changeRoomState(req: Request) async throws -> HTTPStatus {
+    func changeRoomState(req: Request) async throws -> ChangeRoomStateResponse {
         let user = try await TokenHelpers.getUserID(req: req)
         let roomModel = try req.content.decode(ChangeRoomStateRequest.self)
         
@@ -190,13 +190,13 @@ struct GameController: RouteCollection {
             .filter(\.$adminId == user)
             .first()
         else {
-            return .notFound
+            throw Abort(.notFound)
         }
         
         room.isOpen = roomModel.isOpen
         room.inviteCode = roomModel.isOpen ? nil : String.randomString(length: 20)
         try await room.update(on: req.db)
-        return .ok
+        return ChangeRoomStateResponse(inviteCode: room.inviteCode)
     }
     
     func deleteRoomRequest(req: Request) async throws -> HTTPStatus {
